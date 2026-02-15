@@ -1,0 +1,93 @@
+import os
+import requests
+import sys
+import time
+
+# --- استدعاء المفاتيح من الخزنة ---
+GEMINI_KEY = os.environ.get("GEMINI_KEY")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
+URL = os.environ.get("CSV_URL")
+
+# دالة الإرسال لتليجرام
+def send_telegram(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except:
+        pass
+
+# دالة التحليل الرئيسية
+def run_saudi_analyzer():
+    try:
+        print("📥 جاري سحب بيانات السوق السعودي (تداول)...")
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(URL, headers=headers, timeout=30)
+        raw_text = response.text.strip()
+        
+        # التحقق من وجود بيانات
+        if not raw_text or "No stocks found" in raw_text:
+            send_telegram("🔔 **ماسح السوق السعودي**\n\nلم يتم العثور على فرص تطابق الفلتر الفني اليوم.")
+            return
+
+        print("🤖 جاري الاتصال بالمحلل المالي (Gemini)...")
+        
+        # استخدام موديل Flash Latest المستقر والقوي
+        gemini_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}"
+        
+        # --- البرومبت (التعليمة) العربية ---
+        prompt = f"""
+        أنت محلل مالي خبير في سوق الأسهم السعودي (تداول - TASI).
+        لديك البيانات الفنية الخام التالية لأسهم تم فلترتها بناءً على مؤشرات قوية:
+        {raw_text}
+
+        المطلوب منك:
+        1. اختر أفضل 3 أسهم واعدة فنياً لليوم بناءً على الزخم والسيولة.
+        2. اكتب تقريراً احترافياً مختصراً باللهجة المالية السعودية.
+        3. التزم تماماً بهذا القالب (لا تغير التنسيق):
+
+        🇸🇦 **تقرير تداول الذكي اليومي** 🇸🇦
+
+        🚀 **[اسم السهم] (الرمز)** - السعر: [السعر الحالي] ريال
+        📊 **النظرة الفنية:** [جملة واحدة قوية، مثل: اختراق مقاومة تاريخية، تقاطع إيجابي للماكد، سيولة شرائية عالية]
+        🎯 **الخطة المقترحة:**
+        • الدخول: [منطقة السعر الحالية]
+        • الهدف: [سعر مستهدف منطقي قريب]
+        • الوقف: [كسر سعر كذا]
+        
+        ---
+        ⚠️ *إخلاء مسؤولية: هذا تحليل فني آلي بواسطة الذكاء الاصطناعي، وليس دعوة ملزمة للبيع أو الشراء. قرارك الاستثماري مسؤوليتك وحدك.*
+        """
+
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}]
+        }
+        
+        headers_gemini = {'Content-Type': 'application/json'}
+        g_res = requests.post(gemini_endpoint, json=payload, headers=headers_gemini, timeout=30)
+        
+        # التعامل مع ضغط الطلبات (Retry Logic)
+        if g_res.status_code == 429:
+            print("⏳ ضغط على الشبكة، إعادة المحاولة بعد 20 ثانية...")
+            time.sleep(20)
+            g_res = requests.post(gemini_endpoint, json=payload, headers=headers_gemini, timeout=30)
+
+        if g_res.status_code != 200:
+            error_msg = g_res.text
+            print(f"❌ Gemini Error: {error_msg}")
+            send_telegram(f"⚠️ **خطأ تقني:**\n`{error_msg[:200]}`")
+            sys.exit(1)
+
+        analysis = g_res.json()['candidates'][0]['content']['parts'][0]['text']
+        
+        # إرسال التقرير النهائي
+        send_telegram(analysis)
+        print("✅ تم إرسال التقرير السعودي بنجاح!")
+
+    except Exception as e:
+        print(f"💥 خطأ غير متوقع: {str(e)}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    run_saudi_analyzer()
