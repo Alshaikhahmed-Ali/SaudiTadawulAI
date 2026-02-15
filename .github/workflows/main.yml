@@ -1,8 +1,10 @@
-import os
-import requests
-import sys
-import time
+name: Saudi Market AI Sniper
 
+on:
+  push:      # <--- هذا هو السطر الجديد السحري
+  schedule:
+    - cron: '50 6 * * 0-4'
+  workflow_dispatch:
 # --- استدعاء المفاتيح من الخزنة ---
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
