@@ -1,150 +1,74 @@
-import os
-import requests
-import sys
-import time
-import csv
-import io
-import re  # مكتبة للبحث عن الأرقام داخل النصوص
+import os, requests, sys, time, csv, io, re
 
-# --- استيراد قاعدة البيانات ---
-try:
-    from companies import tadawul_map
-except ImportError:
-    tadawul_map = {}
+# استيراد قاعدة البيانات الشاملة
+try: from companies import tadawul_map
+except ImportError: tadawul_map = {}
 
-# --- الإعدادات ---
+# الإعدادات
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 URL = os.environ.get("CSV_URL")
 
 def get_clean_data(raw_text):
-    """
-    دالة ذكية تستخرج الرمز (4 أرقام) وتجلب الاسم العربي
-    حتى لو كانت البيانات ملوثة مثل '4291.SA|129.00'
-    """
-    # البحث عن أي 4 أرقام متتالية في النص (وهي رمز الشركة)
     match = re.search(r'(\d{4})', str(raw_text))
-    
     if match:
-        clean_symbol = match.group(1) # استخراج الرقم فقط (مثلاً 4291)
-        arabic_name = tadawul_map.get(clean_symbol, "سهم شركة") # البحث في القاموس
-        return clean_symbol, arabic_name
-    
-    return raw_text, "سهم"
+        symbol = match.group(1)
+        name = tadawul_map.get(symbol, f"شركة ({symbol})")
+        market_type = "main"
+        if symbol.startswith("9"): market_type = "nomu"
+        elif symbol.startswith("433") or symbol.startswith("434") or symbol.startswith("47"): market_type = "reit"
+        return symbol, name, market_type
+    return None, None, None
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, data=payload, timeout=30)
-    except:
-        pass
+    try: requests.post(url, data=payload, timeout=30)
+    except: pass
 
 def run_saudi_analyzer():
     try:
-        print("📥 جاري سحب بيانات السوق السعودي...")
         response = requests.get(URL, timeout=60)
-        
-        if response.status_code != 200:
-            send_telegram(f"⚠️ خطأ في المصدر: {response.status_code}")
-            return
-
         csv_text = response.text.strip()
-
         if not csv_text or len(csv_text) < 10: 
-            send_telegram("🦅 **قناص السوق السعودي:**\nلا توجد أسهم تطابق الفلتر حالياً.")
+            send_telegram("🦅 **قناص السوق السعودي:**\nلا توجد فرص تطابق الفلتر حالياً.")
             return
 
-        print("⚙️ جاري تنظيف البيانات واستبدال الرموز...")
-        
-        processed_rows = []
-        # قراءة الملف سطر سطر
+        # تجميع الأسهم حسب السوق
+        markets = {"main": [], "nomu": [], "reit": []}
         lines = csv_text.split('\n')
-        
-        # تخطي أول سطر (الترويسة) إذا كان يحتوي على كلمات إنجليزية
-        if "Symbol" in lines[0] or "Ticker" in lines[0]:
-            lines = lines[1:]
+        if "Symbol" in lines[0]: lines = lines[1:]
 
         for line in lines:
-            if len(line) > 5: # تجاهل الأسطر الفارغة
-                # استخراج الرمز والاسم باستخدام الدالة الذكية
-                symbol, arabic_name = get_clean_data(line)
-                
-                # تجهيز السطر للذكاء الاصطناعي بشكل نظيف جداً
-                # نرسل له: "نادك (6010) - بيانات: ..."
-                row_str = f"الشركة: {arabic_name} ({symbol}) | البيانات الخام: {line}"
-                processed_rows.append(row_str)
+            if len(line) > 5:
+                symbol, name, m_type = get_clean_data(line)
+                if symbol: markets[m_type].append(f"{name} ({symbol}) | البيانات: {line}")
 
-        final_data_for_ai = "\n".join(processed_rows)
+        # بناء محتوى التحليل
+        final_input = ""
+        for k, v in markets.items():
+            if v: final_input += f"--- {k.upper()} ---\n" + "\n".join(v) + "\n\n"
 
-        print("🤖 جاري الإرسال للمحلل الذكي...")
-        
-        gemini_endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}"
-        
         prompt = f"""
-        أنت "قناص السوق السعودي"، محلل فني خبير.
-        لديك البيانات التالية (تم تنظيف الأسماء العربية لك):
-        
-        ```text
-        {final_data_for_ai}
-        ```
-
-        المطلوب منك بدقة متناهية:
-        1. **التنظيف:** تجاهل الأرقام الغريبة أو التواريخ الموجودة في البيانات الخام. ركز على السعر والمؤشرات.
-        2. **الاختيار:** اختر أفضل 4 أو 5 فرص إيجابية.
-        3. **الإيموجي:** ضع إيموجي *واحد* معبر بجانب اسم كل شركة (مثال: 🥛 لنادك، 🏫 للوطنية للتعليم، 🏥 للطبية).
-        4. **التنسيق:** التزم بهذا القالب الجمالي (بدون تغيير):
-
+        أنت قناص السوق السعودي، حلل البيانات التالية:
+        {final_input}
+        المطلوب: اختر أفضل الفرص الإيجابية فقط، صنفها تحت العناوين: (السوق الرئيسي، نمو، الريت).
+        لا تذكر أي أسهم مستبعدة. استخدم الإيموجي المناسب. التزم بالتنسيق:
         🦅🇸🇦 **قناص السوق السعودي (AI)** 🇸🇦🦅
-        *تقرير الفرص اللحظية*
-
-        1️⃣ **[الاسم العربي]** [الإيموجي] ([الرمز])
-        💰 السعر: [السعر الحالي] ريال
-        📈 التحليل: [جملة فنية واحدة ذكية ومختصرة]
-        🎯 هدف: [الهدف] | 🛡️ وقف: [الوقف]
-        ــــــــــــــــــــــــــــــــــــــــــــــــ
-
-        2️⃣ **[الاسم العربي]** [الإيموجي] ([الرمز])
-        💰 السعر: [السعر الحالي] ريال
-        📈 التحليل: [جملة فنية واحدة ذكية ومختصرة]
-        🎯 هدف: [الهدف] | 🛡️ وقف: [الوقف]
-        ــــــــــــــــــــــــــــــــــــــــــــــــ
-
-        3️⃣ **[الاسم العربي]** [الإيموجي] ([الرمز])
-        💰 السعر: [السعر الحالي] ريال
-        📈 التحليل: [جملة فنية واحدة ذكية ومختصرة]
-        🎯 هدف: [الهدف] | 🛡️ وقف: [الوقف]
-        ــــــــــــــــــــــــــــــــــــــــــــــــ
-
-        *(كرر للبقية...)*
-
-        📝 **ملاحظة:** تم استبعاد سهم [الاسم] لارتفاع التذبذب.
-
-        🔴 **تنويه:** قراءة فنية آلية وليست توصية مالية. القرار مسؤوليتك.
-        ✦
+        ### [اسم السوق]
+        • [الاسم العربي] ([الرمز]) | [السعر] ريال
+        📈 [التحليل] | 🎯 هدف: [الهدف] | 🛡️ وقف: [الوقف]
+        🔴 ملاحظة هامة: هذه الرسالة ليست توصية بيع أو شراء وإنما قراءة فنية، والقرار النهائي بيد المستثمر.
+        ✦✦✦
         """
 
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-        
-        headers_gemini = {'Content-Type': 'application/json'}
-        g_res = requests.post(gemini_endpoint, json=payload, headers=headers_gemini, timeout=120)
-        
-        if g_res.status_code == 429 or g_res.status_code == 500:
-            time.sleep(10)
-            g_res = requests.post(gemini_endpoint, json=payload, headers=headers_gemini, timeout=120)
-
-        if g_res.status_code != 200:
-            sys.exit(1)
+        g_res = requests.post(f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}",
+                              json={"contents": [{"parts": [{"text": prompt}]}]}, headers={'Content-Type': 'application/json'}, timeout=120)
 
         analysis = g_res.json()['candidates'][0]['content']['parts'][0]['text']
         send_telegram(analysis)
-        print("✅ تم الإرسال بالتنسيق المصحح والنظيف!")
-
     except Exception as e:
-        print(f"💥 Error: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
