@@ -12,32 +12,42 @@ URL = os.environ.get("CSV_URL")
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 def send_to_telegram(symbol, info, price, target, stop, analysis, index):
-    """إرسال كل سهم في رسالة منفصلة (صورة شارت + بيانات)"""
-    # رابط الصورة المباشر (يُستخدم فقط للسحب البرمجي ولا يظهر للمشترك)
-    chart_img = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days&s=big"
+    """إرسال كل سهم في رسالة منفصلة بصورة شارت احترافية من Market-In-Out"""
     
-    # بناء نص الرسالة (بدون روابط خارجية)
+    # بناء رابط الصورة المباشر من محرك Market-In-Out مع المؤشرات الفنية المتقدمة
+    # المؤشرات: 132(RSI), 46(Bollinger), 61(Moving Average)
+    chart_img = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days&s=big&tdata=1"
+    
+    # تنسيق نص الرسالة (بدون أي روابط خارجية لضمان الخصوصية)
     caption = (
         f"🦅 **قناص السوق السعودي (AI)** 🇸🇦\n\n"
         f"{EMOJIS[index]} • *{info['name']}* ({symbol})\n"
         f"💰 السعر الحالي: {price} ريال\n"
-        f"📈 التحليل: {analysis}\n"
-        f"🎯 الهدف القادم: {target}\n"
+        f"📈 التحليل الفني: {analysis}\n"
+        f"🎯 الهدف المرصود: {target}\n"
         f"🛡️ وقف الخسارة: {stop}\n\n"
         f"📍 التصنيف: {info['market']}"
     )
 
-    # إرسال الصورة كرسالة مستقلة
+    # إرسال الصورة كرسالة أساسية (Photo) لضمان ظهورها بحجم كبير
     photo_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    res = requests.post(photo_api, data={"chat_id": CHAT_ID, "photo": chart_img, "caption": caption, "parse_mode": "Markdown"})
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": chart_img,
+        "caption": caption,
+        "parse_mode": "Markdown"
+    }
     
-    # نظام الأمان: إذا تعذر إرسال الصورة، نرسل البيانات كنص فوراً
+    res = requests.post(photo_api, data=payload, timeout=30)
+    
+    # نظام الأمان: إذا تعذر إرسال الصورة (لأسباب تقنية في الخادم)، نرسل النص فوراً
     if res.status_code != 200:
         text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         requests.post(text_api, data={"chat_id": CHAT_ID, "text": caption, "parse_mode": "Markdown"})
 
 def run_saudi_analyzer():
     try:
+        # 1. جلب البيانات اللحظية
         response = requests.get(URL, timeout=60)
         csv_text = response.text.strip()
         if not csv_text: return
@@ -54,18 +64,17 @@ def run_saudi_analyzer():
             if match:
                 symbol = match.group(1)
                 if symbol in tadawul_map:
-                    # استخراج السعر الحالي بدقة
                     p_match = re.search(r'(\d+\.\d+)', line)
                     price = p_match.group(1) if p_match else "---"
                     stock_prices[symbol] = price
                     if len(top_list) < 5: top_list.append(symbol)
                     ai_input += f"ID:{symbol} Price:{price} Data:{line}\n"
 
-        # برومبت يفرض استخراج أرقام حقيقية للأهداف والوقف
+        # 2. طلب التحليل الفني المركز
         prompt = f"""
         Analyze these Saudi stocks. Return top 3 positive ones.
-        Output format: SYMBOL|TARGET|STOP|ANALYSIS
-        Strict Rules: Use numbers for Target/Stop (CurrentPrice +3% / -2%). No company names.
+        Format: SYMBOL|TARGET|STOP|ANALYSIS
+        Rules: Target +3%, Stop -2% based on Price. No intros.
         Data: {ai_input}
         """
 
@@ -80,15 +89,15 @@ def run_saudi_analyzer():
             raw_output = g_res.json()['candidates'][0]['content']['parts'][0]['text']
             final_results = [l for l in raw_output.strip().split('\n') if '|' in l]
 
-        # إذا لم نجد نتائج، نستخدم القائمة البرمجية لضمان عدم الفراغ
+        # 3. نظام الطوارئ في حال الفراغ
         if not final_results:
             for s in top_list[:3]:
                 p = stock_prices.get(s, "0")
                 target = round(float(p)*1.03, 2) if p != "0" else "---"
                 stop = round(float(p)*0.97, 2) if p != "0" else "---"
-                final_results.append(f"{s}|{target}|{stop}|ارتداد فني من مناطق دعم")
+                final_results.append(f"{s}|{target}|{stop}|ارتداد فني متوقع من القاع")
 
-        # إرسال كل نتيجة في رسالة منفصلة
+        # 4. توزيع الرسائل (كل سهم بطاقة مستقلة)
         for i, row in enumerate(final_results):
             parts = row.split('|')
             if len(parts) >= 4:
@@ -97,7 +106,8 @@ def run_saudi_analyzer():
                 if info:
                     send_to_telegram(symbol, info, stock_prices.get(symbol, "---"), parts[1], parts[2], parts[3], i)
 
-    except Exception as e: print(f"Error: {e}")
+    except Exception as e:
+        print(f"حدث خطأ: {e}")
 
 if __name__ == "__main__":
     run_saudi_analyzer()
