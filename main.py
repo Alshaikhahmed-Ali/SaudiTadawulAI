@@ -1,6 +1,5 @@
 import os, requests, re
 
-# استيراد القاموس الذهبي الموثق
 try: from companies import tadawul_map
 except ImportError: tadawul_map = {}
 
@@ -12,48 +11,40 @@ URL = os.environ.get("CSV_URL")
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 def send_to_telegram(symbol, info, price, target, stop, analysis, index):
-    """إرسال كل سهم في رسالة منفصلة بصورة شارت احترافية من Market-In-Out"""
+    # رابط الصورة الفنية (مخفي)
+    # أضفت امتداد وهمي .png في نهاية الرابط لإقناع تيليجرام بأنه صورة
+    chart_img = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days&s=big&tdata=1#.png"
     
-    # بناء رابط الصورة المباشر من محرك Market-In-Out مع المؤشرات الفنية المتقدمة
-    # المؤشرات: 132(RSI), 46(Bollinger), 61(Moving Average)
-    chart_img = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days&s=big&tdata=1"
+    # نضع الرابط في سبيس (مساحة) مخفية في بداية الرسالة
+    # المشترك سيرى الصورة فوق النص ولن يرى الرابط
+    hidden_link = f"[ ]({chart_img})"
     
-    # تنسيق نص الرسالة (بدون أي روابط خارجية لضمان الخصوصية)
     caption = (
-        f"🦅 **قناص السوق السعودي (AI)** 🇸🇦\n\n"
+        f"{hidden_link}🦅 **قناص السوق السعودي (AI)** 🇸🇦\n\n"
         f"{EMOJIS[index]} • *{info['name']}* ({symbol})\n"
         f"💰 السعر الحالي: {price} ريال\n"
-        f"📈 التحليل الفني: {analysis}\n"
-        f"🎯 الهدف المرصود: {target}\n"
-        f"🛡️ وقف الخسارة: {stop}\n\n"
-        f"📍 التصنيف: {info['market']}"
+        f"📈 التحليل: {analysis}\n"
+        f"🎯 الهدف: {target}\n"
+        f"🛡️ الوقف: {stop}\n\n"
+        f"📍 {info['market']}"
     )
 
-    # إرسال الصورة كرسالة أساسية (Photo) لضمان ظهورها بحجم كبير
-    photo_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    api_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "photo": chart_img,
-        "caption": caption,
-        "parse_mode": "Markdown"
+        "text": caption,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": False # تفعيل المعاينة لإظهار الصورة
     }
-    
-    res = requests.post(photo_api, data=payload, timeout=30)
-    
-    # نظام الأمان: إذا تعذر إرسال الصورة (لأسباب تقنية في الخادم)، نرسل النص فوراً
-    if res.status_code != 200:
-        text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(text_api, data={"chat_id": CHAT_ID, "text": caption, "parse_mode": "Markdown"})
+    requests.post(api_url, data=payload)
 
 def run_saudi_analyzer():
     try:
-        # 1. جلب البيانات اللحظية
         response = requests.get(URL, timeout=60)
         csv_text = response.text.strip()
         if not csv_text: return
 
-        lines = csv_text.split('\n')
-        if "Symbol" in lines[0]: lines = lines[1:]
+        lines = csv_text.split('\n')[1:] # تخطي الرأس
         
         ai_input = ""
         stock_prices = {}
@@ -65,39 +56,33 @@ def run_saudi_analyzer():
                 symbol = match.group(1)
                 if symbol in tadawul_map:
                     p_match = re.search(r'(\d+\.\d+)', line)
-                    price = p_match.group(1) if p_match else "---"
+                    price = p_match.group(1) if p_match else "0"
                     stock_prices[symbol] = price
                     if len(top_list) < 5: top_list.append(symbol)
                     ai_input += f"ID:{symbol} Price:{price} Data:{line}\n"
 
-        # 2. طلب التحليل الفني المركز
-        prompt = f"""
-        Analyze these Saudi stocks. Return top 3 positive ones.
-        Format: SYMBOL|TARGET|STOP|ANALYSIS
-        Rules: Target +3%, Stop -2% based on Price. No intros.
-        Data: {ai_input}
-        """
-
-        g_res = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
-            json={"contents": [{"parts": [{"text": prompt}]}]},
-            headers={'Content-Type': 'application/json'}, timeout=30
-        )
-
+        # طلب التحليل من جيميناي
+        prompt = f"Analyze: {ai_input}. Return top 3 in format: SYMBOL|TARGET|STOP|ANALYSIS."
+        
         final_results = []
-        if g_res.status_code == 200:
-            raw_output = g_res.json()['candidates'][0]['content']['parts'][0]['text']
-            final_results = [l for l in raw_output.strip().split('\n') if '|' in l]
+        try:
+            g_res = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+                json={"contents": [{"parts": [{"text": prompt}]}]},
+                headers={'Content-Type': 'application/json'}, timeout=30
+            )
+            if g_res.status_code == 200:
+                raw_output = g_res.json()['candidates'][0]['content']['parts'][0]['text']
+                final_results = [l for l in raw_output.strip().split('\n') if '|' in l]
+        except: pass
 
-        # 3. نظام الطوارئ في حال الفراغ
+        # نظام الطوارئ (حساب الأرقام برمجياً)
         if not final_results:
             for s in top_list[:3]:
-                p = stock_prices.get(s, "0")
-                target = round(float(p)*1.03, 2) if p != "0" else "---"
-                stop = round(float(p)*0.97, 2) if p != "0" else "---"
-                final_results.append(f"{s}|{target}|{stop}|ارتداد فني متوقع من القاع")
+                p = float(stock_prices.get(s, 0))
+                final_results.append(f"{s}|{round(p*1.03,2)}|{round(p*0.97,2)}|ارتداد فني متوقع")
 
-        # 4. توزيع الرسائل (كل سهم بطاقة مستقلة)
+        # إرسال الرسائل
         for i, row in enumerate(final_results):
             parts = row.split('|')
             if len(parts) >= 4:
@@ -106,8 +91,7 @@ def run_saudi_analyzer():
                 if info:
                     send_to_telegram(symbol, info, stock_prices.get(symbol, "---"), parts[1], parts[2], parts[3], i)
 
-    except Exception as e:
-        print(f"حدث خطأ: {e}")
+    except Exception as e: print(f"Error: {e}")
 
 if __name__ == "__main__":
     run_saudi_analyzer()
