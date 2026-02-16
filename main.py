@@ -1,6 +1,6 @@
 import os, requests, re
 
-# استيراد القاموس الذهبي الموثق
+# استيراد القاموس الذهبي
 try: 
     from companies import tadawul_map
 except ImportError: 
@@ -35,12 +35,12 @@ def run_saudi_analyzer():
 
         if not ai_input: return
 
-        # 3. برومبت "إجباري": يمنع الرد الفارغ ويمنع المسميات الخارجية
+        # 3. برومبت إجباري يمنع الرد الفارغ ويمنع التخمين
         prompt = f"""
-        Analyze these symbols technically. You MUST return at least 5 opportunities.
-        If indicators are weak, pick the best relative ones.
-        Output format: SYMBOL|TARGET|STOP|TECHNICAL_STRENGTH
-        Strict Rules: NO NAMES. NO INTROS. NO EMPTY RESPONSE.
+        Analyze these Saudi symbols. You MUST pick at least 5 symbols to report.
+        If indicators are not perfect, choose the best available.
+        Format per line: SYMBOL|TARGET|STOP|ANALYSIS
+        Strict Rules: NO NAMES. NO INTROS. NO EMPTY OUTPUT.
         Data:
         {ai_input}
         """
@@ -54,16 +54,15 @@ def run_saudi_analyzer():
         if g_res.status_code != 200: return
         raw_output = g_res.json()['candidates'][0]['content']['parts'][0]['text']
 
-        # 4. بناء الرسالة برمجياً (بايثون يفرض الاسم والترقيم)
-        report_lines = raw_output.strip().split('\n')
-        if not report_lines or len(report_lines[0]) < 5:
-            # نظام الطوارئ إذا حاول AI التهرب
-            return 
+        # 4. بناء الرسالة (بايثون يفرض الاسم والترقيم)
+        output_lines = [l for l in raw_output.strip().split('\n') if '|' in l]
+        
+        if not output_lines: return # حماية إضافية
 
         report = "🦅🇸🇦 **قناص السوق السعودي (AI)** 🇸🇦🦅\n*تقرير الفرص اللحظية الموثق*\n\n"
         
         count = 0
-        for row in report_lines:
+        for row in output_lines:
             parts = row.split('|')
             if len(parts) >= 4 and count < 10:
                 symbol = parts[0].strip()
