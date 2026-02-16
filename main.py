@@ -12,15 +12,12 @@ URL = os.environ.get("CSV_URL")
 
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
-# Cache للمعلومات لتجنب الطلبات المتكررة
 COMPANY_INFO_CACHE = {}
 
 def get_chart_url(symbol):
-    """الحصول على رابط الشارت"""
     return f"https://www.tradingview.com/chart/?symbol=TADAWUL%3A{symbol}"
 
 def scrape_argaam_news(symbol):
-    """جلب آخر الأخبار من موقع أرقام"""
     news = []
     try:
         url = f"https://www.argaam.com/ar/company/news/{symbol}"
@@ -33,14 +30,11 @@ def scrape_argaam_news(symbol):
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # محاولة استخراج الأخبار (هذا مثال - قد يحتاج تعديل حسب هيكل الموقع)
             news_items = soup.find_all('div', class_=['article-title', 'news-item', 'title'], limit=5)
             
             for item in news_items[:3]:
                 news_text = item.get_text(strip=True)
                 if news_text and len(news_text) > 10:
-                    # تنظيف النص
                     news_text = news_text[:100] if len(news_text) > 100 else news_text
                     news.append(news_text)
             
@@ -53,10 +47,8 @@ def scrape_argaam_news(symbol):
     return news
 
 def scrape_tadawul_events(symbol):
-    """جلب الأحداث القادمة من موقع تداول"""
     events = []
     try:
-        # محاولة جلب من موقع تداول (هذا مثال - قد يحتاج API key أو تعديل)
         url = f"https://www.saudiexchange.sa/wps/portal/saudiexchange/listing/company-profile-main/!ut/p/z1/jY_BDoIwEEQ_qYfuFkTQo8YLXvRgPJiyYErbkLYY_XqRxKsmejvJm8y8BQVKCq68k4Yry-dxPC1mD9ARjkUaLQcRVXgS8TIVySKJxuTyNhUnxPMZL5I4nKbhn_gXKC_J_c1-wkOjFUqj0Rne8Vb1Hd_RDfZGOp8MgXfY-c4a0Qnrre2sp9YqaaSxUKO2XpN25DKc76F23lqt-x_lf0Hq/{symbol}"
         
         headers = {
@@ -68,8 +60,6 @@ def scrape_tadawul_events(symbol):
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # البحث عن تواريخ مهمة (مثال - يحتاج تعديل)
             date_elements = soup.find_all(['span', 'div', 'td'], class_=re.compile('date|event', re.I), limit=10)
             
             for elem in date_elements[:3]:
@@ -86,7 +76,6 @@ def scrape_tadawul_events(symbol):
     return events
 
 def get_company_info_from_gemini(symbol, info, news_context=""):
-    """استخدام Gemini لتحليل وتلخيص الأخبار المجمعة"""
     try:
         if news_context:
             prompt = (
@@ -116,7 +105,6 @@ def get_company_info_from_gemini(symbol, info, news_context=""):
         if g_res.status_code == 200:
             response_text = g_res.json()['candidates'][0]['content']['parts'][0]['text']
             
-            # استخراج الأسطر التي تبدأ بـ -
             items = []
             for line in response_text.strip().split('\n'):
                 line = line.strip()
@@ -133,23 +121,15 @@ def get_company_info_from_gemini(symbol, info, news_context=""):
     return []
 
 def get_company_info(symbol, info):
-    """
-    جلب معلومات الشركة من مصادر حقيقية مع Cache
-    """
-    # التحقق من الـ Cache أولاً
     if symbol in COMPANY_INFO_CACHE:
         print(f"  ✓ استخدام البيانات من الذاكرة المؤقتة")
         return COMPANY_INFO_CACHE[symbol]
     
     print(f"  📡 جلب معلومات حقيقية عن {info['name']}...")
     
-    # 1. جلب الأخبار من أرقام
     news_list = scrape_argaam_news(symbol)
-    
-    # 2. جلب الأحداث من تداول
     events_list = scrape_tadawul_events(symbol)
     
-    # 3. إذا لم نجد أخبار حقيقية، نستخدم Gemini للتلخيص أو إعطاء سياق عام
     if not news_list:
         print(f"    - لم يتم العثور على أخبار، استخدام Gemini...")
         news_list = get_company_info_from_gemini(symbol, info, "")
@@ -158,7 +138,6 @@ def get_company_info(symbol, info):
         print(f"    - لم يتم العثور على أحداث...")
         events_list = []
     
-    # التأكد من وجود بيانات افتراضية
     if not news_list:
         news_list = ['لا توجد أخبار حديثة متاحة']
     
@@ -170,42 +149,28 @@ def get_company_info(symbol, info):
         'news': news_list[:3]
     }
     
-    # حفظ في الـ Cache
     COMPANY_INFO_CACHE[symbol] = result
     
     return result
 
 def escape_markdown_v2(text):
-    """
-    تنظيف النص لـ MarkdownV2 بطريقة صحيحة
-    """
-    # الترتيب مهم: escape الـ \ أولاً
     text = text.replace('\\', '\\\\')
-    
-    # ثم باقي الأحرف الخاصة
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
-    
     return text
 
 def build_telegram_message(symbol, info, price, target, stop, analysis, index, company_data):
-    """
-    بناء محتوى الرسالة (فصل المسؤوليات)
-    """
     chart_url = get_chart_url(symbol)
     
-    # بناء قائمة الأحداث
     events_text = ""
     for i, event in enumerate(company_data['events'], 1):
         events_text += f"{i}\\. {escape_markdown_v2(event)}\n"
     
-    # بناء قائمة الأخبار
     news_text = ""
     for i, news_item in enumerate(company_data['news'], 1):
         news_text += f"{i}\\. {escape_markdown_v2(news_item)}\n"
     
-    # بناء الرسالة بـ MarkdownV2
     message_v2 = (
         f"🦅 *قناص السوق السعودي \\(AI\\)* 🇸🇦\n\n"
         f"{EMOJIS[index]} • *{escape_markdown_v2(info['name'])}* \\({symbol}\\)\n"
@@ -219,7 +184,6 @@ def build_telegram_message(symbol, info, price, target, stop, analysis, index, c
         f"⚠️ _هذا تحليل فني وليس توصية بيع أو شراء_"
     )
     
-    # بناء الرسالة البسيطة (بديل)
     events_simple = "\n".join([f"{i}. {e}" for i, e in enumerate(company_data['events'], 1)])
     news_simple = "\n".join([f"{i}. {n}" for i, n in enumerate(company_data['news'], 1)])
     
@@ -239,9 +203,6 @@ def build_telegram_message(symbol, info, price, target, stop, analysis, index, c
     return message_v2, message_simple
 
 def send_telegram_message(message, parse_mode=None):
-    """
-    إرسال رسالة إلى Telegram (وظيفة مستقلة)
-    """
     text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     
     data = {
@@ -260,24 +221,18 @@ def send_telegram_message(message, parse_mode=None):
         return False, str(e)
 
 def send_to_telegram(symbol, info, price, target, stop, analysis, index, company_data):
-    """
-    إرسال كل سهم في رسالة منفصلة
-    """
     print(f"[DEBUG] إرسال: {symbol} - {info['name']}")
     
-    # بناء الرسائل
     message_v2, message_simple = build_telegram_message(
         symbol, info, price, target, stop, analysis, index, company_data
     )
     
-    # محاولة الإرسال بـ MarkdownV2
     success, response = send_telegram_message(message_v2, "MarkdownV2")
     
     if success:
         print(f"[SUCCESS] ✓ تم إرسال {symbol} بنجاح (MarkdownV2)")
         return True
     
-    # إذا فشل، محاولة بديلة بدون تنسيق
     print(f"[WARNING] فشل MarkdownV2، محاولة التنسيق البسيط...")
     success, response = send_telegram_message(message_simple, None)
     
@@ -289,13 +244,9 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index, company
         return False
 
 def extract_stock_symbol(line):
-    """استخراج رمز السهم من السطر مع التحقق من السياق"""
     matches = re.findall(r'\b(\d{4})\b', line)
-    
-    # تصفية: استبعاد السنوات
     valid_symbols = [m for m in matches if m not in [str(y) for y in range(2020, 2031)]]
     
-    # إرجاع أول رمز صالح موجود في tadawul_map
     for symbol in valid_symbols:
         if symbol in tadawul_map:
             return symbol
@@ -308,7 +259,6 @@ def run_saudi_analyzer():
     print("=" * 60)
     
     try:
-        # 1. التحقق من المتغيرات البيئية
         print("\n[1] التحقق من المتغيرات البيئية...")
         required_vars = {
             'GEMINI_KEY': GEMINI_KEY,
@@ -327,7 +277,6 @@ def run_saudi_analyzer():
         
         print("  ✓ جميع المتغيرات موجودة")
         
-        # 2. تحميل ملف CSV
         print("\n[2] جاري تحميل بيانات CSV...")
         response = requests.get(URL, timeout=60)
         response.raise_for_status()
@@ -342,13 +291,12 @@ def run_saudi_analyzer():
         print(f"  ✓ عدد الأسطر: {len(lines)}")
         print(f"  ✓ عدد الأسهم في قاعدة البيانات: {len(tadawul_map)}")
         
-        # 3. معالجة البيانات
         print("\n[3] جاري معالجة البيانات...")
         ai_input = ""
         stock_prices = {}
         top_list = []
 
-        for line in lines[1:]:  # تخطي الهيدر
+        for line in lines[1:]:
             if not line.strip():
                 continue
             
@@ -372,7 +320,6 @@ def run_saudi_analyzer():
             print("\n[ERROR] ⚠️ لم يتم العثور على أسهم للتحليل!")
             return
 
-        # 4. طلب التحليل من Gemini
         print("\n[4] جاري طلب التحليل من Gemini AI...")
         prompt = (
             f"أنت محلل سوق أسهم سعودي خبير. حلل البيانات التالية:\n\n{ai_input}\n\n"
@@ -408,7 +355,6 @@ def run_saudi_analyzer():
             except (KeyError, IndexError) as e:
                 print(f"  [ERROR] خطأ في معالجة رد Gemini: {e}")
 
-        # إذا فشل، استخدم بيانات افتراضية
         if not final_results:
             print("\n[WARNING] ⚠️ استخدام البيانات الافتراضية...")
             for s in top_list[:3]:
@@ -421,7 +367,6 @@ def run_saudi_analyzer():
                 except ValueError:
                     continue
 
-        # 5. جلب معلومات الشركات وإرسال الرسائل
         print("\n[5] جاري جلب معلومات الشركات وإرسال التوصيات...")
         
         sent_count = 0
@@ -434,10 +379,8 @@ def run_saudi_analyzer():
                 if info and symbol in stock_prices:
                     print(f"\n  [{i+1}/3] معالجة {symbol} - {info['name']}")
                     
-                    # جلب معلومات الشركة
                     company_data = get_company_info(symbol, info)
                     
-                    # إرسال الرسالة
                     success = send_to_telegram(
                         symbol, 
                         info, 
@@ -451,7 +394,6 @@ def run_saudi_analyzer():
                     
                     if success:
                         sent_count += 1
-                        # فاصل زمني بين الرسائل (إلا الأخيرة)
                         if i < min(len(final_results), 3) - 1:
                             print("  ⏳ انتظار 3 ثواني...")
                             time.sleep(3)
@@ -471,12 +413,3 @@ def run_saudi_analyzer():
 
 if __name__ == "__main__":
     run_saudi_analyzer()
-```
-
----
-
-## ملف requirements.txt:
-```
-requests>=2.31.0
-beautifulsoup4>=4.12.0
-lxml>=4.9.0
