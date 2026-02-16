@@ -1,6 +1,3 @@
-## الكود المُحسّن:
-
-```python
 import os, requests, re, io
 
 try: from companies import tadawul_map
@@ -14,8 +11,6 @@ URL = os.environ.get("CSV_URL")
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 def send_to_telegram(symbol, info, price, target, stop, analysis, index):
-    """إرسال كل سهم في رسالة منفصلة بصورة شارت حقيقية"""
-    
     target_url = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days&s=big"
     
     caption = (
@@ -28,11 +23,9 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index):
     )
 
     try:
-        # محاولة تحميل الصورة أولاً
         img_response = requests.get(target_url, timeout=10)
         img_response.raise_for_status()
         
-        # إرسال الصورة الحقيقية
         photo_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
         files = {'photo': ('chart.png', io.BytesIO(img_response.content), 'image/png')}
         
@@ -48,7 +41,6 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index):
     except Exception as e:
         print(f"فشل إرسال الصورة: {e}")
     
-    # البديل: إرسال نص مع رابط الشارت
     try:
         text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         message_with_link = f"{caption}\n\n[🔗 عرض الشارت]({target_url})"
@@ -65,7 +57,6 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index):
 
 def run_saudi_analyzer():
     try:
-        # التحقق من المتغيرات البيئية
         if not all([GEMINI_KEY, TELEGRAM_TOKEN, CHAT_ID, URL]):
             print("خطأ: متغيرات البيئة غير مكتملة")
             return
@@ -78,7 +69,7 @@ def run_saudi_analyzer():
             print("تحذير: ملف CSV فارغ")
             return
 
-        lines = csv_text.split('\n')[1:]  # تخطي الهيدر
+        lines = csv_text.split('\n')[1:]
         
         ai_input = ""
         stock_prices = {}
@@ -88,12 +79,10 @@ def run_saudi_analyzer():
             if not line.strip():
                 continue
                 
-            # البحث عن رمز السهم (4 أرقام)
             match = re.search(r'\b(\d{4})\b', line)
             if match:
                 symbol = match.group(1)
                 if symbol in tadawul_map:
-                    # البحث عن السعر
                     p_match = re.search(r'(\d+\.\d+)', line)
                     if p_match:
                         price = p_match.group(1)
@@ -106,7 +95,6 @@ def run_saudi_analyzer():
             print("تحذير: لم يتم العثور على أسهم للتحليل")
             return
 
-        # طلب التحليل من Gemini
         prompt = (
             f"أنت محلل سوق أسهم سعودي خبير. حلل البيانات التالية:\n\n{ai_input}\n\n"
             "اختر أفضل 3 أسهم وأرجع النتيجة بالضبط بهذا الشكل (سطر واحد لكل سهم):\n"
@@ -130,7 +118,6 @@ def run_saudi_analyzer():
             except (KeyError, IndexError) as e:
                 print(f"خطأ في معالجة رد Gemini: {e}")
 
-        # إذا فشل التحليل، استخدم البيانات الافتراضية
         if not final_results:
             print("تحذير: استخدام البيانات الافتراضية")
             for s in top_list[:3]:
@@ -141,9 +128,8 @@ def run_saudi_analyzer():
                 except ValueError:
                     continue
 
-        # إرسال النتائج
         sent_count = 0
-        for i, row in enumerate(final_results[:3]):  # أقصى حد 3 أسهم
+        for i, row in enumerate(final_results[:3]):
             parts = row.split('|')
             if len(parts) >= 4:
                 symbol = parts[0].strip()
@@ -171,4 +157,3 @@ def run_saudi_analyzer():
 
 if __name__ == "__main__":
     run_saudi_analyzer()
-✅ تنظيف البيانات قبل المعالجة
