@@ -201,8 +201,7 @@ def build_telegram_message(symbol, info, price, target, stop, analysis, index, c
     )
     
     return message_v2, message_simple
-
-def send_telegram_message(message, parse_mode=None):
+    def send_telegram_message(message, parse_mode=None):
     text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     
     data = {
@@ -413,3 +412,4 @@ def run_saudi_analyzer():
 
 if __name__ == "__main__":
     run_saudi_analyzer()
+    
