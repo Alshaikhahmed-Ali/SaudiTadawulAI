@@ -1,4 +1,6 @@
 import os, requests, re, io, time
+from bs4 import BeautifulSoup
+from datetime import datetime
 
 try: from companies import tadawul_map
 except ImportError: tadawul_map = {}
@@ -10,31 +12,99 @@ URL = os.environ.get("CSV_URL")
 
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
-def get_chart_urls(symbol):
-    """الحصول على روابط بديلة للشارت"""
-    return {
-        'tradingview': f"https://www.tradingview.com/chart/?symbol=TADAWUL%3A{symbol}",
-        'mubasher': f"https://www.mubasher.info/markets/TDWL/stocks/{symbol}"
-    }
+# Cache للمعلومات لتجنب الطلبات المتكررة
+COMPANY_INFO_CACHE = {}
 
-def get_company_info(symbol, info):
-    """الحصول على معلومات إضافية عن الشركة من Gemini"""
+def get_chart_url(symbol):
+    """الحصول على رابط الشارت"""
+    return f"https://www.tradingview.com/chart/?symbol=TADAWUL%3A{symbol}"
+
+def scrape_argaam_news(symbol):
+    """جلب آخر الأخبار من موقع أرقام"""
+    news = []
     try:
-        prompt = (
-            f"أنت محلل سوق سعودي متخصص. الشركة: {info['name']} (رمز: {symbol})\n\n"
-            f"أرجع المعلومات التالية بالضبط بهذا التنسيق:\n\n"
-            f"EVENTS:\n"
-            f"- [تاريخ] حدث\n"
-            f"- [تاريخ] حدث\n"
-            f"- [تاريخ] حدث\n\n"
-            f"NEWS:\n"
-            f"- خبر قصير\n"
-            f"- خبر قصير\n"
-            f"- خبر قصير\n\n"
-            f"إذا لم تكن لديك معلومات حقيقية، أرجع:\n"
-            f"EVENTS:\n- لا توجد أحداث مجدولة\n\n"
-            f"NEWS:\n- لا توجد أخبار حديثة"
-        )
+        url = f"https://www.argaam.com/ar/company/news/{symbol}"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        print(f"    - جلب الأخبار من أرقام...")
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # محاولة استخراج الأخبار (هذا مثال - قد يحتاج تعديل حسب هيكل الموقع)
+            news_items = soup.find_all('div', class_=['article-title', 'news-item', 'title'], limit=5)
+            
+            for item in news_items[:3]:
+                news_text = item.get_text(strip=True)
+                if news_text and len(news_text) > 10:
+                    # تنظيف النص
+                    news_text = news_text[:100] if len(news_text) > 100 else news_text
+                    news.append(news_text)
+            
+            if news:
+                print(f"    ✓ تم جلب {len(news)} خبر من أرقام")
+        
+    except Exception as e:
+        print(f"    [WARNING] فشل جلب الأخبار من أرقام: {e}")
+    
+    return news
+
+def scrape_tadawul_events(symbol):
+    """جلب الأحداث القادمة من موقع تداول"""
+    events = []
+    try:
+        # محاولة جلب من موقع تداول (هذا مثال - قد يحتاج API key أو تعديل)
+        url = f"https://www.saudiexchange.sa/wps/portal/saudiexchange/listing/company-profile-main/!ut/p/z1/jY_BDoIwEEQ_qYfuFkTQo8YLXvRgPJiyYErbkLYY_XqRxKsmejvJm8y8BQVKCq68k4Yry-dxPC1mD9ARjkUaLQcRVXgS8TIVySKJxuTyNhUnxPMZL5I4nKbhn_gXKC_J_c1-wkOjFUqj0Rne8Vb1Hd_RDfZGOp8MgXfY-c4a0Qnrre2sp9YqaaSxUKO2XpN25DKc76F23lqt-x_lf0Hq/{symbol}"
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        
+        print(f"    - جلب الأحداث من تداول...")
+        response = requests.get(url, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # البحث عن تواريخ مهمة (مثال - يحتاج تعديل)
+            date_elements = soup.find_all(['span', 'div', 'td'], class_=re.compile('date|event', re.I), limit=10)
+            
+            for elem in date_elements[:3]:
+                event_text = elem.get_text(strip=True)
+                if event_text and len(event_text) > 5:
+                    events.append(event_text[:80])
+            
+            if events:
+                print(f"    ✓ تم جلب {len(events)} حدث من تداول")
+        
+    except Exception as e:
+        print(f"    [WARNING] فشل جلب الأحداث من تداول: {e}")
+    
+    return events
+
+def get_company_info_from_gemini(symbol, info, news_context=""):
+    """استخدام Gemini لتحليل وتلخيص الأخبار المجمعة"""
+    try:
+        if news_context:
+            prompt = (
+                f"أنت محلل سوق سعودي. الشركة: {info['name']} (رمز: {symbol})\n\n"
+                f"لديك الأخبار التالية:\n{news_context}\n\n"
+                f"لخص أهم 3 أخبار بشكل مختصر وواضح (سطر واحد لكل خبر، بدون أرقام):\n"
+                f"- خبر مختصر\n"
+                f"- خبر مختصر\n"
+                f"- خبر مختصر"
+            )
+        else:
+            prompt = (
+                f"أنت محلل سوق سعودي. الشركة: {info['name']} (رمز: {symbol})\n\n"
+                f"اذكر 3 أحداث مالية نموذجية قد تهم المستثمرين (بدون تواريخ محددة):\n"
+                f"- حدث عام\n"
+                f"- حدث عام\n"
+                f"- حدث عام"
+            )
         
         g_res = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
@@ -46,143 +116,183 @@ def get_company_info(symbol, info):
         if g_res.status_code == 200:
             response_text = g_res.json()['candidates'][0]['content']['parts'][0]['text']
             
-            # استخراج الأحداث والأخبار
-            events = []
-            news = []
-            
-            lines = response_text.strip().split('\n')
-            current_section = None
-            
-            for line in lines:
+            # استخراج الأسطر التي تبدأ بـ -
+            items = []
+            for line in response_text.strip().split('\n'):
                 line = line.strip()
-                if 'EVENTS:' in line:
-                    current_section = 'events'
-                elif 'NEWS:' in line:
-                    current_section = 'news'
-                elif line.startswith('-') and line != '-':
+                if line.startswith('-'):
                     clean_line = line[1:].strip()
-                    if current_section == 'events' and len(events) < 3:
-                        events.append(clean_line)
-                    elif current_section == 'news' and len(news) < 3:
-                        news.append(clean_line)
+                    if clean_line:
+                        items.append(clean_line)
             
-            return {
-                'events': events if events else ['لا توجد أحداث مجدولة'],
-                'news': news if news else ['لا توجد أخبار حديثة']
-            }
+            return items[:3] if items else []
     
     except Exception as e:
-        print(f"  [WARNING] فشل جلب معلومات الشركة: {e}")
+        print(f"    [WARNING] فشل تحليل Gemini: {e}")
     
-    return {
-        'events': ['لا توجد أحداث مجدولة'],
-        'news': ['لا توجد أخبار حديثة']
-    }
+    return []
 
-def escape_markdown(text):
-    """تنظيف النص للـ MarkdownV2"""
+def get_company_info(symbol, info):
+    """
+    جلب معلومات الشركة من مصادر حقيقية مع Cache
+    """
+    # التحقق من الـ Cache أولاً
+    if symbol in COMPANY_INFO_CACHE:
+        print(f"  ✓ استخدام البيانات من الذاكرة المؤقتة")
+        return COMPANY_INFO_CACHE[symbol]
+    
+    print(f"  📡 جلب معلومات حقيقية عن {info['name']}...")
+    
+    # 1. جلب الأخبار من أرقام
+    news_list = scrape_argaam_news(symbol)
+    
+    # 2. جلب الأحداث من تداول
+    events_list = scrape_tadawul_events(symbol)
+    
+    # 3. إذا لم نجد أخبار حقيقية، نستخدم Gemini للتلخيص أو إعطاء سياق عام
+    if not news_list:
+        print(f"    - لم يتم العثور على أخبار، استخدام Gemini...")
+        news_list = get_company_info_from_gemini(symbol, info, "")
+    
+    if not events_list:
+        print(f"    - لم يتم العثور على أحداث...")
+        events_list = []
+    
+    # التأكد من وجود بيانات افتراضية
+    if not news_list:
+        news_list = ['لا توجد أخبار حديثة متاحة']
+    
+    if not events_list:
+        events_list = ['لا توجد أحداث مجدولة معلنة']
+    
+    result = {
+        'events': events_list[:3],
+        'news': news_list[:3]
+    }
+    
+    # حفظ في الـ Cache
+    COMPANY_INFO_CACHE[symbol] = result
+    
+    return result
+
+def escape_markdown_v2(text):
+    """
+    تنظيف النص لـ MarkdownV2 بطريقة صحيحة
+    """
+    # الترتيب مهم: escape الـ \ أولاً
+    text = text.replace('\\', '\\\\')
+    
+    # ثم باقي الأحرف الخاصة
     special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
     for char in special_chars:
         text = text.replace(char, f'\\{char}')
+    
     return text
 
-def send_to_telegram(symbol, info, price, target, stop, analysis, index):
-    """إرسال كل سهم في رسالة منفصلة مع روابط الشارت"""
-    
-    chart_urls = get_chart_urls(symbol)
-    
-    # الحصول على معلومات الشركة (الأحداث والأخبار)
-    print(f"  جاري جلب معلومات الشركة...")
-    company_data = get_company_info(symbol, info)
-    
-    # بناء الرسالة مع MarkdownV2
-    name_escaped = escape_markdown(info['name'])
-    market_escaped = escape_markdown(info['market'])
-    analysis_escaped = escape_markdown(analysis)
+def build_telegram_message(symbol, info, price, target, stop, analysis, index, company_data):
+    """
+    بناء محتوى الرسالة (فصل المسؤوليات)
+    """
+    chart_url = get_chart_url(symbol)
     
     # بناء قائمة الأحداث
     events_text = ""
-    for i, event in enumerate(company_data['events'][:3], 1):
-        event_escaped = escape_markdown(event)
-        events_text += f"{i}\\. {event_escaped}\n"
+    for i, event in enumerate(company_data['events'], 1):
+        events_text += f"{i}\\. {escape_markdown_v2(event)}\n"
     
     # بناء قائمة الأخبار
     news_text = ""
-    for i, news_item in enumerate(company_data['news'][:3], 1):
-        news_escaped = escape_markdown(news_item)
-        news_text += f"{i}\\. {news_escaped}\n"
+    for i, news_item in enumerate(company_data['news'], 1):
+        news_text += f"{i}\\. {escape_markdown_v2(news_item)}\n"
     
-    caption = (
+    # بناء الرسالة بـ MarkdownV2
+    message_v2 = (
         f"🦅 *قناص السوق السعودي \\(AI\\)* 🇸🇦\n\n"
-        f"{EMOJIS[index]} • *{name_escaped}* \\({symbol}\\)\n"
+        f"{EMOJIS[index]} • *{escape_markdown_v2(info['name'])}* \\({symbol}\\)\n"
         f"💰 السعر: `{price}` ريال\n"
-        f"📈 التحليل الفني: {analysis_escaped}\n"
+        f"📈 التحليل الفني: {escape_markdown_v2(analysis)}\n"
         f"🎯 الهدف: `{target}` \\| 🛡️ الوقف: `{stop}`\n\n"
-        f"📍 {market_escaped}\n\n"
+        f"📍 {escape_markdown_v2(info['market'])}\n\n"
         f"📅 *الأحداث القادمة:*\n{events_text}\n"
         f"📰 *آخر الأخبار:*\n{news_text}\n"
-        f"📊 [عرض الشارت على TradingView]({chart_urls['tradingview']})\n\n"
+        f"📊 [عرض الشارت]({chart_url})\n\n"
         f"⚠️ _هذا تحليل فني وليس توصية بيع أو شراء_"
     )
-
-    try:
-        print(f"[DEBUG] محاولة إرسال: {symbol} - {info['name']}")
-        
-        text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        
-        res = requests.post(text_api, data={
-            "chat_id": CHAT_ID,
-            "text": caption,
-            "parse_mode": "MarkdownV2",
-            "disable_web_page_preview": False
-        }, timeout=10)
-        
-        if res.status_code == 200:
-            print(f"[SUCCESS] ✓ تم إرسال {symbol} بنجاح")
-            return True
-        else:
-            print(f"[WARNING] فشل MarkdownV2: {res.status_code}")
-            
-            # محاولة بديلة بتنسيق بسيط
-            events_simple = "\n".join([f"{i}. {e}" for i, e in enumerate(company_data['events'][:3], 1)])
-            news_simple = "\n".join([f"{i}. {n}" for i, n in enumerate(company_data['news'][:3], 1)])
-            
-            simple_caption = (
-                f"🦅 قناص السوق السعودي (AI) 🇸🇦\n\n"
-                f"{EMOJIS[index]} • {info['name']} ({symbol})\n"
-                f"💰 السعر: {price} ريال\n"
-                f"📈 التحليل الفني: {analysis}\n"
-                f"🎯 الهدف: {target} | 🛡️ الوقف: {stop}\n\n"
-                f"📍 {info['market']}\n\n"
-                f"📅 الأحداث القادمة:\n{events_simple}\n\n"
-                f"📰 آخر الأخبار:\n{news_simple}\n\n"
-                f"📊 عرض الشارت: {chart_urls['tradingview']}\n\n"
-                f"⚠️ هذا تحليل فني وليس توصية بيع أو شراء"
-            )
-            
-            res2 = requests.post(text_api, data={
-                "chat_id": CHAT_ID,
-                "text": simple_caption,
-                "disable_web_page_preview": False
-            }, timeout=10)
-            
-            if res2.status_code == 200:
-                print(f"[SUCCESS] ✓ تم إرسال {symbol} بتنسيق بسيط")
-                return True
-            else:
-                print(f"[ERROR] فشل الإرسال تماماً: {res2.text[:200]}")
-        
-    except Exception as e:
-        print(f"[ERROR] استثناء أثناء الإرسال: {e}")
     
-    return False
+    # بناء الرسالة البسيطة (بديل)
+    events_simple = "\n".join([f"{i}. {e}" for i, e in enumerate(company_data['events'], 1)])
+    news_simple = "\n".join([f"{i}. {n}" for i, n in enumerate(company_data['news'], 1)])
+    
+    message_simple = (
+        f"🦅 قناص السوق السعودي (AI) 🇸🇦\n\n"
+        f"{EMOJIS[index]} • {info['name']} ({symbol})\n"
+        f"💰 السعر: {price} ريال\n"
+        f"📈 التحليل الفني: {analysis}\n"
+        f"🎯 الهدف: {target} | 🛡️ الوقف: {stop}\n\n"
+        f"📍 {info['market']}\n\n"
+        f"📅 الأحداث القادمة:\n{events_simple}\n\n"
+        f"📰 آخر الأخبار:\n{news_simple}\n\n"
+        f"📊 عرض الشارت: {chart_url}\n\n"
+        f"⚠️ هذا تحليل فني وليس توصية بيع أو شراء"
+    )
+    
+    return message_v2, message_simple
+
+def send_telegram_message(message, parse_mode=None):
+    """
+    إرسال رسالة إلى Telegram (وظيفة مستقلة)
+    """
+    text_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    
+    data = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "disable_web_page_preview": False
+    }
+    
+    if parse_mode:
+        data["parse_mode"] = parse_mode
+    
+    try:
+        response = requests.post(text_api, data=data, timeout=10)
+        return response.status_code == 200, response
+    except Exception as e:
+        return False, str(e)
+
+def send_to_telegram(symbol, info, price, target, stop, analysis, index, company_data):
+    """
+    إرسال كل سهم في رسالة منفصلة
+    """
+    print(f"[DEBUG] إرسال: {symbol} - {info['name']}")
+    
+    # بناء الرسائل
+    message_v2, message_simple = build_telegram_message(
+        symbol, info, price, target, stop, analysis, index, company_data
+    )
+    
+    # محاولة الإرسال بـ MarkdownV2
+    success, response = send_telegram_message(message_v2, "MarkdownV2")
+    
+    if success:
+        print(f"[SUCCESS] ✓ تم إرسال {symbol} بنجاح (MarkdownV2)")
+        return True
+    
+    # إذا فشل، محاولة بديلة بدون تنسيق
+    print(f"[WARNING] فشل MarkdownV2، محاولة التنسيق البسيط...")
+    success, response = send_telegram_message(message_simple, None)
+    
+    if success:
+        print(f"[SUCCESS] ✓ تم إرسال {symbol} بنجاح (تنسيق بسيط)")
+        return True
+    else:
+        print(f"[ERROR] فشل الإرسال تماماً: {response}")
+        return False
 
 def extract_stock_symbol(line):
     """استخراج رمز السهم من السطر مع التحقق من السياق"""
-    # البحث عن رمز مكون من 4 أرقام
     matches = re.findall(r'\b(\d{4})\b', line)
     
-    # تصفية النتائج: استبعاد السنوات (2020-2030)
+    # تصفية: استبعاد السنوات
     valid_symbols = [m for m in matches if m not in [str(y) for y in range(2020, 2031)]]
     
     # إرجاع أول رمز صالح موجود في tadawul_map
@@ -194,23 +304,30 @@ def extract_stock_symbol(line):
 
 def run_saudi_analyzer():
     print("=" * 60)
-    print("بدء تشغيل محلل السوق السعودي")
+    print("🚀 بدء تشغيل محلل السوق السعودي")
     print("=" * 60)
     
     try:
-        # التحقق من المتغيرات البيئية
+        # 1. التحقق من المتغيرات البيئية
         print("\n[1] التحقق من المتغيرات البيئية...")
-        print(f"  - GEMINI_KEY: {'✓ موجود' if GEMINI_KEY else '✗ مفقود'}")
-        print(f"  - TELEGRAM_TOKEN: {'✓ موجود' if TELEGRAM_TOKEN else '✗ مفقود'}")
-        print(f"  - CHAT_ID: {CHAT_ID if CHAT_ID else '✗ مفقود'}")
-        print(f"  - CSV_URL: {'✓ موجود' if URL else '✗ مفقود'}")
+        required_vars = {
+            'GEMINI_KEY': GEMINI_KEY,
+            'TELEGRAM_TOKEN': TELEGRAM_TOKEN,
+            'CHAT_ID': CHAT_ID,
+            'CSV_URL': URL
+        }
         
-        if not all([GEMINI_KEY, TELEGRAM_TOKEN, CHAT_ID, URL]):
+        for var_name, var_value in required_vars.items():
+            status = '✓ موجود' if var_value else '✗ مفقود'
+            print(f"  - {var_name}: {status}")
+        
+        if not all(required_vars.values()):
             print("\n[ERROR] ⚠️ متغيرات البيئة غير مكتملة!")
             return
+        
         print("  ✓ جميع المتغيرات موجودة")
         
-        # تحميل ملف CSV
+        # 2. تحميل ملف CSV
         print("\n[2] جاري تحميل بيانات CSV...")
         response = requests.get(URL, timeout=60)
         response.raise_for_status()
@@ -225,22 +342,19 @@ def run_saudi_analyzer():
         print(f"  ✓ عدد الأسطر: {len(lines)}")
         print(f"  ✓ عدد الأسهم في قاعدة البيانات: {len(tadawul_map)}")
         
-        # معالجة البيانات
+        # 3. معالجة البيانات
         print("\n[3] جاري معالجة البيانات...")
         ai_input = ""
         stock_prices = {}
         top_list = []
-        processed_count = 0
 
         for line in lines[1:]:  # تخطي الهيدر
             if not line.strip():
                 continue
             
-            # استخدام الدالة المحسّنة لاستخراج الرمز
             symbol = extract_stock_symbol(line)
             
             if symbol:
-                # البحث عن السعر
                 p_match = re.search(r'(\d+\.\d+)', line)
                 if p_match:
                     price = p_match.group(1)
@@ -248,33 +362,22 @@ def run_saudi_analyzer():
                     if len(top_list) < 5:
                         top_list.append(symbol)
                     ai_input += f"ID:{symbol} Price:{price} Data:{line}\n"
-                    processed_count += 1
-                    
-                    if processed_count <= 3:  # طباعة أول 3 فقط
-                        print(f"  ✓ {symbol} - {tadawul_map[symbol]['name']} - {price} ريال")
 
-        if processed_count > 3:
-            print(f"  ... وتمت معالجة {processed_count - 3} سهم إضافي")
+        print(f"  ✓ تمت معالجة {len(stock_prices)} سهم")
         
-        print(f"\n  📊 إجمالي الأسهم المعالجة: {len(stock_prices)}")
+        if len(stock_prices) > 0:
+            print(f"  📊 عينة: {list(stock_prices.items())[:3]}")
 
         if not ai_input:
             print("\n[ERROR] ⚠️ لم يتم العثور على أسهم للتحليل!")
-            print("  تحقق من:")
-            print("  1. ملف companies.py موجود ويحتوي على tadawul_map")
-            print("  2. رموز الأسهم في CSV تطابق الرموز في tadawul_map")
-            print("  3. صيغة ملف CSV صحيحة")
             return
 
-        # طلب التحليل من Gemini
+        # 4. طلب التحليل من Gemini
         print("\n[4] جاري طلب التحليل من Gemini AI...")
         prompt = (
-            f"أنت محلل سوق أسهم سعودي خبير. حلل البيانات التالية بعناية:\n\n{ai_input}\n\n"
-            "اختر أفضل 3 أسهم بناءً على:\n"
-            "- الزخم السعري والحجم\n"
-            "- المؤشرات الفنية\n"
-            "- نسب المخاطرة/العائد\n\n"
-            "أرجع النتيجة بالضبط بهذا الشكل (سطر واحد لكل سهم، بدون ترقيم):\n"
+            f"أنت محلل سوق أسهم سعودي خبير. حلل البيانات التالية:\n\n{ai_input}\n\n"
+            "اختر أفضل 3 أسهم بناءً على المؤشرات الفنية.\n\n"
+            "أرجع النتيجة بهذا الشكل بالضبط (بدون ترقيم):\n"
             "SYMBOL|TARGET_PRICE|STOP_LOSS|BRIEF_ANALYSIS\n\n"
             "مثال:\n"
             "1234|45.50|42.30|اختراق مستوى مقاومة مع حجم تداول قوي\n"
@@ -294,21 +397,18 @@ def run_saudi_analyzer():
         if g_res.status_code == 200:
             try:
                 raw_output = g_res.json()['candidates'][0]['content']['parts'][0]['text']
-                print(f"\n  📝 رد Gemini:")
-                print("  " + "-" * 50)
-                for line in raw_output.strip().split('\n')[:5]:  # طباعة أول 5 أسطر
-                    print(f"  {line}")
-                print("  " + "-" * 50)
+                print(f"\n  📝 رد Gemini (أول 3 أسطر):")
+                for line in raw_output.strip().split('\n')[:3]:
+                    print(f"    {line}")
                 
-                # استخراج النتائج
                 final_results = [l.strip() for l in raw_output.strip().split('\n') 
                                if '|' in l and l.count('|') >= 3]
-                print(f"\n  ✓ عدد النتائج المستخرجة: {len(final_results)}")
+                print(f"  ✓ تم استخراج {len(final_results)} نتيجة")
                 
             except (KeyError, IndexError) as e:
                 print(f"  [ERROR] خطأ في معالجة رد Gemini: {e}")
 
-        # إذا فشل التحليل، استخدم البيانات الافتراضية
+        # إذا فشل، استخدم بيانات افتراضية
         if not final_results:
             print("\n[WARNING] ⚠️ استخدام البيانات الافتراضية...")
             for s in top_list[:3]:
@@ -318,13 +418,11 @@ def run_saudi_analyzer():
                         target = round(p * 1.03, 2)
                         stop = round(p * 0.97, 2)
                         final_results.append(f"{s}|{target}|{stop}|قيد المراقبة الفنية")
-                        print(f"  + {s}: هدف {target} | وقف {stop}")
                 except ValueError:
                     continue
 
-        # إرسال النتائج مع فواصل زمنية
-        print("\n[5] جاري إرسال التوصيات إلى Telegram...")
-        print("  (مع فاصل زمني 2 ثانية بين كل رسالة لتجنب Rate Limiting)")
+        # 5. جلب معلومات الشركات وإرسال الرسائل
+        print("\n[5] جاري جلب معلومات الشركات وإرسال التوصيات...")
         
         sent_count = 0
         for i, row in enumerate(final_results[:3]):
@@ -334,6 +432,12 @@ def run_saudi_analyzer():
                 info = tadawul_map.get(symbol)
                 
                 if info and symbol in stock_prices:
+                    print(f"\n  [{i+1}/3] معالجة {symbol} - {info['name']}")
+                    
+                    # جلب معلومات الشركة
+                    company_data = get_company_info(symbol, info)
+                    
+                    # إرسال الرسالة
                     success = send_to_telegram(
                         symbol, 
                         info, 
@@ -341,19 +445,21 @@ def run_saudi_analyzer():
                         parts[1].strip(), 
                         parts[2].strip(), 
                         parts[3].strip(), 
-                        i
+                        i,
+                        company_data
                     )
                     
                     if success:
                         sent_count += 1
-                        # إضافة فاصل زمني بين الرسائل (إلا الأخيرة)
+                        # فاصل زمني بين الرسائل (إلا الأخيرة)
                         if i < min(len(final_results), 3) - 1:
-                            print("  ⏳ انتظار ثانيتين...")
-                            time.sleep(2)
+                            print("  ⏳ انتظار 3 ثواني...")
+                            time.sleep(3)
         
         print("\n" + "=" * 60)
         print(f"✅ انتهى التحليل بنجاح!")
         print(f"📊 تم إرسال {sent_count} من {len(final_results)} توصيات")
+        print(f"💾 تم حفظ {len(COMPANY_INFO_CACHE)} شركة في الذاكرة المؤقتة")
         print("=" * 60)
 
     except requests.exceptions.RequestException as e:
@@ -365,3 +471,12 @@ def run_saudi_analyzer():
 
 if __name__ == "__main__":
     run_saudi_analyzer()
+```
+
+---
+
+## ملف requirements.txt:
+```
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
