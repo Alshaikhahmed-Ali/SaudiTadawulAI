@@ -14,8 +14,69 @@ def get_chart_urls(symbol):
     """الحصول على روابط بديلة للشارت"""
     return {
         'tradingview': f"https://www.tradingview.com/chart/?symbol=TADAWUL%3A{symbol}",
-        'argaam': f"https://www.argaam.com/ar/company/companyoverview/{symbol}",
         'mubasher': f"https://www.mubasher.info/markets/TDWL/stocks/{symbol}"
+    }
+
+def get_company_info(symbol, info):
+    """الحصول على معلومات إضافية عن الشركة من Gemini"""
+    try:
+        prompt = (
+            f"أنت محلل سوق سعودي متخصص. الشركة: {info['name']} (رمز: {symbol})\n\n"
+            f"أرجع المعلومات التالية بالضبط بهذا التنسيق:\n\n"
+            f"EVENTS:\n"
+            f"- [تاريخ] حدث\n"
+            f"- [تاريخ] حدث\n"
+            f"- [تاريخ] حدث\n\n"
+            f"NEWS:\n"
+            f"- خبر قصير\n"
+            f"- خبر قصير\n"
+            f"- خبر قصير\n\n"
+            f"إذا لم تكن لديك معلومات حقيقية، أرجع:\n"
+            f"EVENTS:\n- لا توجد أحداث مجدولة\n\n"
+            f"NEWS:\n- لا توجد أخبار حديثة"
+        )
+        
+        g_res = requests.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}",
+            json={"contents": [{"parts": [{"text": prompt}]}]},
+            headers={'Content-Type': 'application/json'},
+            timeout=15
+        )
+        
+        if g_res.status_code == 200:
+            response_text = g_res.json()['candidates'][0]['content']['parts'][0]['text']
+            
+            # استخراج الأحداث والأخبار
+            events = []
+            news = []
+            
+            lines = response_text.strip().split('\n')
+            current_section = None
+            
+            for line in lines:
+                line = line.strip()
+                if 'EVENTS:' in line:
+                    current_section = 'events'
+                elif 'NEWS:' in line:
+                    current_section = 'news'
+                elif line.startswith('-') and line != '-':
+                    clean_line = line[1:].strip()
+                    if current_section == 'events' and len(events) < 3:
+                        events.append(clean_line)
+                    elif current_section == 'news' and len(news) < 3:
+                        news.append(clean_line)
+            
+            return {
+                'events': events if events else ['لا توجد أحداث مجدولة'],
+                'news': news if news else ['لا توجد أخبار حديثة']
+            }
+    
+    except Exception as e:
+        print(f"  [WARNING] فشل جلب معلومات الشركة: {e}")
+    
+    return {
+        'events': ['لا توجد أحداث مجدولة'],
+        'news': ['لا توجد أخبار حديثة']
     }
 
 def escape_markdown(text):
@@ -30,22 +91,38 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index):
     
     chart_urls = get_chart_urls(symbol)
     
+    # الحصول على معلومات الشركة (الأحداث والأخبار)
+    print(f"  جاري جلب معلومات الشركة...")
+    company_data = get_company_info(symbol, info)
+    
     # بناء الرسالة مع MarkdownV2
     name_escaped = escape_markdown(info['name'])
     market_escaped = escape_markdown(info['market'])
     analysis_escaped = escape_markdown(analysis)
     
+    # بناء قائمة الأحداث
+    events_text = ""
+    for i, event in enumerate(company_data['events'][:3], 1):
+        event_escaped = escape_markdown(event)
+        events_text += f"{i}\\. {event_escaped}\n"
+    
+    # بناء قائمة الأخبار
+    news_text = ""
+    for i, news_item in enumerate(company_data['news'][:3], 1):
+        news_escaped = escape_markdown(news_item)
+        news_text += f"{i}\\. {news_escaped}\n"
+    
     caption = (
         f"🦅 *قناص السوق السعودي \\(AI\\)* 🇸🇦\n\n"
         f"{EMOJIS[index]} • *{name_escaped}* \\({symbol}\\)\n"
         f"💰 السعر: `{price}` ريال\n"
-        f"📈 التحليل: {analysis_escaped}\n"
+        f"📈 التحليل الفني: {analysis_escaped}\n"
         f"🎯 الهدف: `{target}` \\| 🛡️ الوقف: `{stop}`\n\n"
         f"📍 {market_escaped}\n\n"
-        f"📊 *عرض الشارت:*\n"
-        f"• [TradingView]({chart_urls['tradingview']})\n"
-        f"• [أرقام]({chart_urls['argaam']})\n"
-        f"• [مباشر]({chart_urls['mubasher']})"
+        f"📅 *الأحداث القادمة:*\n{events_text}\n"
+        f"📰 *آخر الأخبار:*\n{news_text}\n"
+        f"📊 [عرض الشارت على TradingView]({chart_urls['tradingview']})\n\n"
+        f"⚠️ _هذا تحليل فني وليس توصية بيع أو شراء_"
     )
 
     try:
@@ -67,16 +144,20 @@ def send_to_telegram(symbol, info, price, target, stop, analysis, index):
             print(f"[WARNING] فشل MarkdownV2: {res.status_code}")
             
             # محاولة بديلة بتنسيق بسيط
+            events_simple = "\n".join([f"{i}. {e}" for i, e in enumerate(company_data['events'][:3], 1)])
+            news_simple = "\n".join([f"{i}. {n}" for i, n in enumerate(company_data['news'][:3], 1)])
+            
             simple_caption = (
                 f"🦅 قناص السوق السعودي (AI) 🇸🇦\n\n"
                 f"{EMOJIS[index]} • {info['name']} ({symbol})\n"
                 f"💰 السعر: {price} ريال\n"
-                f"📈 التحليل: {analysis}\n"
+                f"📈 التحليل الفني: {analysis}\n"
                 f"🎯 الهدف: {target} | 🛡️ الوقف: {stop}\n\n"
                 f"📍 {info['market']}\n\n"
-                f"📊 عرض الشارت:\n"
-                f"🔗 {chart_urls['tradingview']}\n"
-                f"🔗 {chart_urls['argaam']}"
+                f"📅 الأحداث القادمة:\n{events_simple}\n\n"
+                f"📰 آخر الأخبار:\n{news_simple}\n\n"
+                f"📊 عرض الشارت: {chart_urls['tradingview']}\n\n"
+                f"⚠️ هذا تحليل فني وليس توصية بيع أو شراء"
             )
             
             res2 = requests.post(text_api, data={
