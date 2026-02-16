@@ -11,6 +11,18 @@ URL = os.environ.get("CSV_URL")
 
 EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
+def send_photo_with_text(photo_url, caption):
+    """إرسال صورة الشارت مع النص التوضيحي أسفلها"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": CHAT_ID,
+        "photo": photo_url,
+        "caption": caption,
+        "parse_mode": "Markdown"
+    }
+    try: requests.post(url, data=payload, timeout=30)
+    except: pass
+
 def run_saudi_analyzer():
     try:
         response = requests.get(URL, timeout=60)
@@ -32,11 +44,10 @@ def run_saudi_analyzer():
                     p_match = re.search(r'(\d+\.\d+)', line)
                     price = p_match.group(1) if p_match else "---"
                     stock_data[symbol] = {"price": price, "line": line}
-                    if len(top_list) < 7: top_list.append(symbol)
+                    if len(top_list) < 5: top_list.append(symbol)
                     ai_input += f"ID:{symbol} Price:{price} Data:{line}\n"
 
-        # طلب التحليل الفني
-        prompt = f"Analyze stocks: {ai_input}. Return top 5 in format: SYMBOL|TARGET|STOP|ANALYSIS"
+        prompt = f"Analyze stocks: {ai_input}. Return top 3 positive in format: SYMBOL|TARGET|STOP|ANALYSIS"
         
         final_results = []
         try:
@@ -51,37 +62,30 @@ def run_saudi_analyzer():
         except: pass
 
         if not final_results:
-            for s in top_list[:5]: final_results.append(f"{s}|--- |--- |يظهر بوادر ارتداد فني")
+            for s in top_list[:3]: final_results.append(f"{s}|--- |--- |مراقبة فنية")
 
-        # بناء الرسالة مع روابط الشارتات الفنية
-        report = "🦅🇸🇦 **قناص السوق السعودي (AI)** 🇸🇦🦅\n*تحليل فني متقدم مع الشارتات والمؤشرات*\n\n"
-        
-        count = 0
-        for row in final_results:
+        # بناء وإرسال الصور مع التحليل
+        for i, row in enumerate(final_results):
             parts = row.split('|')
-            if len(parts) >= 4 and count < 10:
+            if len(parts) >= 4:
                 symbol, target, stop, analysis = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
                 info = tadawul_map.get(symbol)
                 if info:
-                    # رابط الشارت المتقدم من TradingView (للمعاينة البصرية)
-                    tv_chart = f"https://ar.tradingview.com/symbols/TADAWUL-{symbol}/"
+                    # توليد رابط الصورة المباشر مع المؤشرات الفنية (حجم كبير)
+                    # هذا الرابط يسحب صورة الشارت فقط بدون واجهة الموقع
+                    chart_img_url = f"https://alfa.marketinout.com/chart/draw?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days;148,8,15,6;84,15,8,6&s=big"
                     
-                    # رابط الفلتر مع المؤشرات الفنية (الرابط الذي زودتني به تم تطويعه لكل سهم)
-                    filter_url = f"https://alfa.marketinout.com/screener/run?symbol={symbol}.SA&indicator=132,7,2,days;46,7,3,days;61,7,days;&s=big"
+                    caption = (
+                        f"🦅 **قناص السوق السعودي (AI)** 🇸🇦\n\n"
+                        f"{EMOJIS[i]} • *{info['name']}* ({symbol})\n"
+                        f"💰 السعر: {stock_data[symbol]['price']} ريال\n"
+                        f"📈 {analysis}\n"
+                        f"🎯 هدف: {target} | 🛡️ وقف: {stop}\n\n"
+                        f"📍 {info['market']}"
+                    )
                     
-                    report += f"### {info['market']}\n"
-                    report += f"{EMOJIS[count]} • *{info['name']}* ({symbol}) | {stock_data[symbol]['price']} ريال\n"
-                    report += f"📈 {analysis}\n🎯 هدف: {target} | 🛡️ وقف: {stop}\n"
-                    report += f"📊 [فتح الشارت الفني المباشر 📈]({tv_chart})\n"
-                    report += f"🔍 [تحليل المؤشرات التفصيلي (RSI/MACD)]({filter_url})\n"
-                    report += "ــــــــــــــــــــــــــــــــــــــــــــــــ\n"
-                    count += 1
-
-        report += "\n🔴 ملاحظة: التقرير قراءة فنية وليس توصية استثمارية."
-        
-        # إرسال الرسالة مع تفعيل المعاينة (Web Page Preview) لتظهر صورة الشارت تلقائياً
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", 
-                      data={"chat_id": CHAT_ID, "text": report, "parse_mode": "Markdown", "disable_web_page_preview": False})
+                    # إرسال الصورة كرسالة مستقلة لكل شركة
+                    send_photo_with_text(chart_img_url, caption)
 
     except Exception as e: print(f"Error: {e}")
 
