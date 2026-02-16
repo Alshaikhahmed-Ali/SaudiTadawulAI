@@ -27,17 +27,8 @@ def run_saudi_analyzer():
                 if symbol in tadawul_map:
                     ai_input += f"ID:{symbol} | Data:{line}\n"
 
-        # برومبت يفرض "ثبات" التحليل وحسابات منطقية
-        prompt = f"""
-        Analyze these Saudi stocks. 
-        Rules for Stability:
-        1. Target price must be approx 3-5% above current price.
-        2. Stop loss must be approx 2-3% below current price.
-        3. Use professional, consistent technical terms (RSI, Moving Average, Support/Resistance).
-        4. Return format: SYMBOL|TARGET|STOP|ANALYSIS
-        Data:
-        {ai_input}
-        """
+        # أمر إجباري لضمان عدم الفراغ
+        prompt = f"Analyze these: {ai_input}. You MUST return at least 5 lines. Format: SYMBOL|TARGET|STOP|ANALYSIS"
 
         g_res = requests.post(
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={GEMINI_KEY}",
@@ -51,7 +42,7 @@ def run_saudi_analyzer():
 
         if not final_output: return
 
-        report = "🦅🇸🇦 **قناص السوق السعودي (AI)** 🇸🇦🦅\n*تقرير الفرص اللحظية الموثق*\n\n"
+        report = "🦅🇸🇦 **قناص السوق السعودي (AI)** 🇸🇦🦅\n*تقرير الفرص مع الشارتات المباشرة*\n\n"
         count = 0
         for row in final_output:
             parts = row.split('|')
@@ -59,14 +50,18 @@ def run_saudi_analyzer():
                 symbol, target, stop, analysis = parts[0].strip(), parts[1].strip(), parts[2].strip(), parts[3].strip()
                 info = tadawul_map.get(symbol)
                 if info:
+                    # رابط الشارت المباشر من TradingView
+                    chart_url = f"https://ar.tradingview.com/symbols/TADAWUL-{symbol}/"
+                    
                     report += f"### {info['market']}\n"
-                    report += f"{EMOJIS[count]} • {info['name']} ({symbol})\n"
+                    report += f"{EMOJIS[count]} • [{info['name']} ({symbol})]({chart_url})\n"
                     report += f"📈 {analysis}\n🎯 هدف: {target} | 🛡️ وقف: {stop}\n"
+                    report += f"🔗 [لمشاهدة الشارت اضغط هنا]({chart_url})\n"
                     report += "ــــــــــــــــــــــــــــــــــــــــــــــــ\n"
                     count += 1
 
-        report += "\n🔴 ملاحظة هامة: هذه الرسالة ليست توصية بيع أو شراء. فالقرار الاستثماري مسؤوليتك، والتقرير هذا قراءة فنية فقط.\n✦✦✦"
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": report, "parse_mode": "Markdown"})
+        report += "\n🔴 ملاحظة: التقرير قراءة فنية فقط وليس توصية."
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": report, "parse_mode": "Markdown", "disable_web_page_preview": False})
 
     except Exception as e: print(f"Error: {e}")
 
